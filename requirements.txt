@@ -4,3 +4,6 @@ pinecone
 modal
 google-generativeai
 python-dotenv
+groq
+sentence-transformers
+torch

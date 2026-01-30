@@ -1,128 +1,115 @@
 # === main.py ===
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import asyncio
-import time
-import os
+from pydantic import BaseModel
+from contextlib import asynccontextmanager
+import uvicorn
 
-# Import from rag_utils
-from rag_utils import (
-    answer_question, 
-    generate_followups, 
-    warmup_cache,
-    embedding_cache,
-    save_cache,
-    get_embedding_hash,
-    CACHE_FILE
-)
+# Import your RAG utilities
+from rag_utils import answer_question, generate_followups, warmup_cache, save_cache, cleanup_executor
 
-app = FastAPI()
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage startup and shutdown events"""
+    # Startup
+    print("🚀 Starting up...")
+    await warmup_cache()
+    print("✅ Application ready!")
+    
+    yield
+    
+    # Shutdown
+    print("🛑 Shutting down...")
+    save_cache()
+    cleanup_executor()
+    print("✅ Cleanup complete")
+
+
+# Initialize FastAPI app with lifespan
+app = FastAPI(title="AskMilo API", lifespan=lifespan)
+
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],  # In production, specify your frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.on_event("startup")
-async def startup_event():
-    """Warmup the system"""
-    print("🚀 Starting optimized RAG system...")
-    await warmup_cache()
-    print("✅ System ready!")
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Save cache on shutdown"""
-    save_cache()
-    print("💾 Cache saved!")
+class QuestionRequest(BaseModel):
+    question: str
+    subject: str = "CN"
 
-@app.get("/api")
-def root():
+
+class AnswerResponse(BaseModel):
+    answer: str
+    rag_used: bool
+    sources: int
+
+
+class FollowupResponse(BaseModel):
+    followups: str
+
+
+@app.get("/")
+async def root():
     return {
-        "message": "Optimized Modal RAG is running!", 
-        "cache_size": len(embedding_cache)
+        "message": "AskMilo API is running",
+        "endpoints": {
+            "/api/ask": "POST - Ask a question",
+            "/api/followup": "POST - Generate follow-up questions"
+        }
     }
 
-@app.post("/api/ask")
-async def ask(request: Request):
-    data = await request.json()
-    question = data.get("question")
-    subject = data.get("subject")
-    
-    if not question or not subject:
-        return {"error": "Missing question or subject"}
-    
-    start_time = time.time()
-    answer = await answer_question(subject, question)
-    response_time = time.time() - start_time
-    
-    return {
-        "answer": answer,
-        "response_time": f"{response_time:.2f}s",
-        "cached": get_embedding_hash(question) in embedding_cache
-    }
 
-@app.post("/api/followup")
-async def followup(request: Request):
-    data = await request.json()
-    question = data.get("question")
-    subject = data.get("subject")
-    
-    followups = await generate_followups(subject, question)
-    return {"followups": followups}
-
-@app.post("/api/batch")
-async def batch_ask(request: Request):
-    """Process multiple questions efficiently"""
-    data = await request.json()
-    questions = data.get("questions", [])
-    
-    tasks = []
-    for q_data in questions:
-        task = answer_question(q_data['subject'], q_data['question'])
-        tasks.append(task)
-    
-    answers = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    results = []
-    for i, answer in enumerate(answers):
-        if isinstance(answer, Exception):
-            results.append({"error": str(answer), "question": questions[i]['question']})
-        else:
-            results.append({
-                "question": questions[i]['question'],
-                "subject": questions[i]['subject'],
-                "answer": answer
-            })
-    
-    return {"results": results}
-
-@app.get("/api/health")
-def health_check():
-    return {
-        "status": "healthy",
-        "cache_size": len(embedding_cache),
-        "cache_file_exists": os.path.exists(CACHE_FILE)
-    }
-
-@app.post("/api/cache/clear")
-def clear_cache():
-    """Clear embedding cache"""
-    global embedding_cache
-    embedding_cache.clear()
+@app.post("/api/ask", response_model=AnswerResponse)
+async def ask_question(request: QuestionRequest):
+    """Answer a question using RAG"""
     try:
-        os.remove(CACHE_FILE)
-    except FileNotFoundError:
-        pass
-    return {"message": "Cache cleared"}
+        result = await answer_question(
+            subject=request.subject,
+            question=request.question
+        )
+        return result
+    except Exception as e:
+        print(f"Error in /api/ask: {e}")
+        return {
+            "answer": "An error occurred. Please try again.",
+            "rag_used": False,
+            "sources": 0
+        }
 
-@app.get("/api/cache/stats")
-def cache_stats():
-    """Get cache statistics"""
-    return {
-        "total_entries": len(embedding_cache),
-        "cache_file_exists": os.path.exists(CACHE_FILE)
-    }
+
+@app.post("/api/followup", response_model=FollowupResponse)
+async def get_followups(request: QuestionRequest):
+    """Generate follow-up questions"""
+    try:
+        followups = await generate_followups(
+            subject=request.subject,
+            question=request.question
+        )
+        return {"followups": followups}
+    except Exception as e:
+        print(f"Error in /api/followup: {e}")
+        return {
+            "followups": "1. What are the key concepts?\n2. How is this applied in practice?"
+        }
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy"}
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )

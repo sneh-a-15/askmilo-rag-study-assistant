@@ -15,7 +15,7 @@ export const metadata = {
   title: "AskMilo – Learn Smarter. CS Made Simple.",
   description: "Your AI-powered guide to mastering core Computer Science topics with clear answers and follow-ups tailored to your questions.",
   icons: {
-    icon: "/idea.png", 
+    icon: "#", 
   },
 }
 
