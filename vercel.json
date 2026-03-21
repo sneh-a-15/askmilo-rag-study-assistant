@@ -20,6 +20,6 @@
       "dest": "cs-ui/$1"
     }
   ],
-  "installCommand": "pip install -r requirements.txt && npm install --prefix cs-ui",
+  "installCommand": "pip install -r requirements.api.txt && npm install --prefix cs-ui",
   "buildCommand": "npm run build --prefix cs-ui"
 }
